@@ -136,16 +136,27 @@ clean:	host_clean
 	-$(Q)$(RM) platforms/*/*.o platforms/*/*.d mapfile include/version.h
 
 all_platforms:
+	$(Q)if [ ! -f ../libopencm3/Makefile ]; then \
+		echo "Initialising git submodules..." ;\
+		git submodule init ;\
+		git submodule update ;\
+	fi
+	$(Q)$(MAKE) $(MFLAGS) -C ../libopencm3 lib/stm32/f1 lib/stm32/f4 lib/lm4f
 	$(Q)set -e ;\
 	mkdir -p artifacts/$(shell git describe --always --dirty --tags) ;\
 	echo "<html><body><ul>" > artifacts/index.html ;\
+	$(MAKE) clean ;\
 	for i in platforms/*/Makefile.inc ; do \
 		export DIRNAME=`dirname $$i` ;\
 		export PROBE_HOST=`basename $$DIRNAME` ;\
 		export CFLAGS=-Werror ;\
 		echo "Building for hardware platform: $$PROBE_HOST" ;\
-		$(MAKE) clean ;\
 		$(MAKE);\
+		if [ -f blackmagic ]; then \
+			mv blackmagic artifacts/blackmagic-$$PROBE_HOST ;\
+			echo "<li><a href='blackmagic-$$PROBE_HOST'>$$PROBE_HOST</a></li>"\
+				>> artifacts/index.html ;\
+		fi ;\
 		if [ -f blackmagic.bin ]; then \
 			mv blackmagic.bin artifacts/blackmagic-$$PROBE_HOST.bin ;\
 			echo "<li><a href='blackmagic-$$PROBE_HOST.bin'>$$PROBE_HOST</a></li>"\
@@ -156,9 +167,10 @@ all_platforms:
 			echo "<li><a href='blackmagic_dfu-$$PROBE_HOST.bin'>$$PROBE_HOST DFU</a></li>"\
 				>> artifacts/index.html ;\
 		fi ;\
+		$(MAKE) clean ;\
 	done ;\
 	echo "</ul></body></html>" >> artifacts/index.html ;\
-	cp artifacts/*.bin artifacts/$(shell git describe --always --dirty --tags)
+	cp artifacts/blackmagic* artifacts/$(shell git describe --always --dirty --tags)
 
 command.c: include/version.h
 
@@ -166,9 +178,17 @@ GIT_VERSION := $(shell git describe --always --dirty --tags)
 VERSION_HEADER := \#define FIRMWARE_VERSION "$(GIT_VERSION)"
 
 include/version.h: FORCE
-ifneq ($(file <include/version.h), $(VERSION_HEADER))
-	@echo " GEN GIT  $@"
-	$(Q)$(file >$@,$(VERSION_HEADER))
+	@# If git isn't found then GIT_VERSION will be an empty string.
+ifeq ($(GIT_VERSION),)
+	@echo Git not found, assuming up to date include/version.h
+else
+	@# Note that when we echo the version to the header file, echo writes a final newline
+	@# to the file. This is fine and probably makes the file more human-readable, but
+	@# also means we have to account for that newline in this comparison.
+	$(Q)if [ ! -f $@ ] || [ "$$(cat $@)" != "$$(echo '$(VERSION_HEADER)\n')" ]; then \
+		echo " GEN $@"; \
+		echo '$(VERSION_HEADER)' > $@; \
+	fi
 endif
 
 -include *.d
